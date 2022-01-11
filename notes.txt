@@ -1,0 +1,81 @@
+mkdir -p /scratch/work/nicotine-oxycodone-amphetamine-wt-rnaseq
+cd /scratch/work/nicotine-oxycodone-amphetamine-wt-rnaseq
+
+# Get all files
+wget https://temp.buschlab.org/nicotine-oxycodone-amphetamine-wt-rnaseq/deseq2-noCnt_5-noNic_2/Amp.all.tsv
+wget https://temp.buschlab.org/nicotine-oxycodone-amphetamine-wt-rnaseq/deseq2-noCnt_5-noNic_2/Nic.all.tsv
+wget https://temp.buschlab.org/nicotine-oxycodone-amphetamine-wt-rnaseq/deseq2-noCnt_5-noNic_2/Oxy.all.tsv
+
+# Filter all files to make sig files at various significance thresholds
+for expt in Amp Nic Oxy; do
+  for thr in 0.1 0.05 0.01 0.001; do
+    head -1 $expt.all.tsv > $expt.sig.$thr.tsv
+    awk "{ if (\$3 < $thr) print \$0 }" $expt.all.tsv >> $expt.sig.$thr.tsv
+  done
+done
+
+# Get GO annotation
+wget https://raw.githubusercontent.com/iansealy/topgo-wrapper/master/data/danio_rerio_e100_go.txt
+
+# Run GO enrichment
+for expt in Amp Nic Oxy; do
+  for thr in 0.1 0.05 0.01 0.001; do
+    singularity run --bind /scratch/work /scratch/containers/topgo-wrapper-100.sif \
+      --dir $expt.sig.$thr.topgo \
+      --input_file $expt.all.tsv \
+      --genes_of_interest_file $expt.sig.$thr.tsv \
+      --gene_field 1 \
+      --p_value_field 3 \
+      --name_field 10 \
+      --description_field 11 \
+      --go_terms_file danio_rerio_e100_go.txt \
+      --header 1
+    for type in BP CC MF; do
+      mv $expt.sig.$thr.topgo/$type.sig.tsv $expt.sig.$thr.topgo.$type.tsv
+    done
+    rm -rf $expt.sig.$thr.topgo
+  done
+done
+
+# Make Venn diagrams
+for expt in Amp Nic Oxy; do
+  for type in BP CC MF; do
+    for thr in 0.1 0.05 0.01 0.001; do
+      cut -f 1 $expt.sig.$thr.topgo.$type.tsv | grep -v GO.ID > tmp-$thr.txt
+    done
+    singularity run --bind /scratch/work /scratch/containers/intervene-0.6.4.sif \
+      venn -i tmp-0.1.txt tmp-0.05.txt tmp-0.01.txt tmp-0.001.txt --type list --names 0.1,0.05,0.01,0.001 --figtype png
+    mv Intervene_results/Intervene_venn.png $expt.topgo.$type.venn-4.png
+    rmdir Intervene_results
+    singularity run --bind /scratch/work /scratch/containers/intervene-0.6.4.sif \
+      venn -i tmp-0.1.txt tmp-0.05.txt tmp-0.01.txt --type list --names 0.1,0.05,0.01 --figtype png
+    mv Intervene_results/Intervene_venn.png $expt.topgo.$type.venn-3.png
+    rmdir Intervene_results
+    rm tmp-*.txt
+  done
+done
+
+# Run ZFA enrichment
+for expt in Amp Nic Oxy; do
+  for thr in 0.1 0.05 0.01 0.001; do
+    singularity run --bind /scratch/work /scratch/containers/ZFA-100.sif $expt.sig.$thr.tsv $expt.all.tsv
+    mv zfa.sig.tsv $expt.sig.$thr.zfa.tsv
+    rm zfa.all.tsv table-tmp.sig-Parent-Child-Union-Bonferroni.txt
+  done
+done
+
+# Make Venn diagrams
+for expt in Amp Nic Oxy; do
+  for thr in 0.1 0.05 0.01 0.001; do
+    cut -f 1 $expt.sig.$thr.zfa.tsv > tmp-$thr.txt
+  done
+  singularity run --bind /scratch/work /scratch/containers/intervene-0.6.4.sif \
+    venn -i tmp-0.1.txt tmp-0.05.txt tmp-0.01.txt tmp-0.001.txt --type list --names 0.1,0.05,0.01,0.001 --figtype png
+  mv Intervene_results/Intervene_venn.png $expt.zfa.venn-4.png
+  rmdir Intervene_results
+  singularity run --bind /scratch/work /scratch/containers/intervene-0.6.4.sif \
+    venn -i tmp-0.1.txt tmp-0.05.txt tmp-0.01.txt --type list --names 0.1,0.05,0.01 --figtype png
+  mv Intervene_results/Intervene_venn.png $expt.zfa.venn-3.png
+  rmdir Intervene_results
+  rm tmp-*.txt
+done
